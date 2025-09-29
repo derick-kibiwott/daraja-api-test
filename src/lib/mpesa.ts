@@ -33,6 +33,11 @@ export async function sendStk(amount: number, phone: string, publicId: string) {
     "base64"
   );
 
+  // Construct and encode the Callback URL
+  const callbackUrlWithQuery = `${process.env.MPESA_CALLBACK_URL}?public_id=${publicId}`;
+  const encodedCallbackUrl = encodeURIComponent(callbackUrlWithQuery);
+  console.log(callbackUrlWithQuery);
+
   // 3. Build STK push payload
   const stkPayload = {
     BusinessShortCode: shortCode,
@@ -43,7 +48,7 @@ export async function sendStk(amount: number, phone: string, publicId: string) {
     PartyA: phone,
     PartyB: shortCode,
     PhoneNumber: phone,
-    CallBackURL: `${process.env.MPESA_CALLBACK_URL}?public_id=${publicId}`, // keep in .env
+    CallBackURL: callbackUrlWithQuery, // keep in .env
     AccountReference: "Li's Chinese Restaurant",
     TransactionDesc: "Payment test",
   };
