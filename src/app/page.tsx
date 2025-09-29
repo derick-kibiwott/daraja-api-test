@@ -25,7 +25,7 @@ interface ServerErrorResponse {
 
 export default function Page() {
   const [status, setStatus] = useState<
-    "idle" | "sending" | "waiting" | "success" | "failed"
+    "idle" | "sending" | "pending" | "success" | "failed"
   >("idle");
 
   // State to hold the public_id, which will be used for the subscription
@@ -39,57 +39,97 @@ export default function Page() {
     },
   });
 
-  // Effect to subscribe to a new publicId
   useEffect(() => {
-    // If there is no publicId, or if it has been cleared, do not subscribe
     if (!publicId) return;
 
-    // Use a unique channel name to prevent conflicts
-    const channel = supabase
-      .channel(`payments-changes-${publicId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "payments",
-          filter: `public_id=eq.${publicId}`,
+    (async () => {
+      // Authenticate anonymously with public_id metadata
+      const { error: authError } = await supabase.auth.signInAnonymously({
+        options: {
+          data: {
+            public_id: publicId, // use the one from state
+          },
         },
-        (payload) => {
-          const newStatus = payload.new.status as
-            | "idle"
-            | "sending"
-            | "waiting"
-            | "success"
-            | "failed";
-          console.log("current status ---->", newStatus);
-
-          setStatus(newStatus);
-
-          if (newStatus === "success") {
-            toast.success("Payment successful 🎉");
-            // Clear publicId from state and localStorage to end subscription
-            setPublicId(null);
-            localStorage.removeItem("payment_public_id");
-          }
-
-          if (newStatus === "failed") {
-            toast.error("Payment failed ❌");
-            // Clear publicId from state and localStorage to end subscription
-            setPublicId(null);
-            localStorage.removeItem("payment_public_id");
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log("Supabase subscription status:", status);
       });
 
-    // Cleanup function to remove the channel on component unmount or when publicId changes
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [publicId]); // The useEffect now depends on the publicId state
+      if (authError) {
+        console.error("Supabase auth error:", authError);
+        toast.error("Failed to authenticate session.");
+        setStatus("failed");
+        return;
+      }
+
+      // Get current payment row
+      const { data, error } = await supabase
+        .from("payments")
+        .select("status")
+        .eq("public_id", publicId)
+        .maybeSingle();
+
+      if (error || !data) {
+        console.error("Failed to fetch payment status:", error);
+        return;
+      }
+
+      const currentStatus = data.status as "pending" | "success" | "failed";
+
+      // If already resolved → no subscription
+      if (currentStatus === "success") {
+        setStatus("success");
+        toast.success("Payment successful 🎉");
+        setPublicId(null);
+        localStorage.removeItem("payment_public_id");
+        return;
+      }
+
+      if (currentStatus === "failed") {
+        setStatus("failed");
+        toast.error("Payment failed ❌");
+        setPublicId(null);
+        localStorage.removeItem("payment_public_id");
+        return;
+      }
+
+      // Otherwise → subscribe to updates
+      setStatus("pending");
+      const channel = supabase
+        .channel(`payments-changes-${publicId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "payments",
+            filter: `public_id=eq.${publicId}`,
+          },
+          (payload) => {
+            const newStatus = payload.new.status as
+              | "success"
+              | "failed"
+              | "pending";
+            setStatus(newStatus);
+
+            if (newStatus === "success") {
+              toast.success("Payment successful 🎉");
+              setPublicId(null);
+              localStorage.removeItem("payment_public_id");
+            }
+
+            if (newStatus === "failed") {
+              toast.error("Payment failed ❌");
+              setPublicId(null);
+              localStorage.removeItem("payment_public_id");
+            }
+          }
+        )
+        .subscribe();
+
+      // Cleanup
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    })();
+  }, [publicId]);
 
   const onSubmit = async (values: FormData) => {
     setStatus("sending");
@@ -107,34 +147,17 @@ export default function Page() {
         phone: normalizedPhone,
         amount,
       });
-
+      console.log(data);
       if (!data?.public_id) {
         toast.error("Missing payment ID from server");
         setStatus("failed");
         return;
       }
-
-      // Corrected way to pass custom data in signInAnonymously
-      const { error: authError } = await supabase.auth.signInAnonymously({
-        options: {
-          data: {
-            public_id: data.public_id,
-          },
-        },
-      });
-
-      if (authError) {
-        console.error("Supabase auth error:", authError);
-        toast.error("Failed to authenticate session.");
-        setStatus("failed");
-        return;
-      }
-
+      toast.success("STK Push sent! Check your phone");
       setPublicId(data.public_id);
       localStorage.setItem("payment_public_id", data.public_id);
 
-      toast.success("STK Push sent! Check your phone");
-      setStatus("waiting");
+      setStatus("pending");
     } catch (error: unknown) {
       console.error("STK Push error:", error);
 
@@ -205,7 +228,7 @@ export default function Page() {
 
             <Button
               type="submit"
-              disabled={status === "sending" || status === "waiting"}
+              disabled={status === "sending" || status === "pending"}
               className="w-full flex items-center justify-center"
             >
               {status === "sending" && (
@@ -213,9 +236,9 @@ export default function Page() {
                   <Loader className="animate-spin mr-2" /> Sending…
                 </>
               )}
-              {status === "waiting" && (
+              {status === "pending" && (
                 <>
-                  <Loader className="animate-spin mr-2" /> Waiting for payment…
+                  <Loader className="animate-spin mr-2" /> pending for payment…
                 </>
               )}
               {status === "idle" && "Send"}

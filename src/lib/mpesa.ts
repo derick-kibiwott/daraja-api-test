@@ -35,7 +35,6 @@ export async function sendStk(amount: number, phone: string, publicId: string) {
 
   // Construct and encode the Callback URL
   const callbackUrlWithQuery = `${process.env.MPESA_CALLBACK_URL}?public_id=${publicId}`;
-  const encodedCallbackUrl = encodeURIComponent(callbackUrlWithQuery);
   console.log(callbackUrlWithQuery);
 
   // 3. Build STK push payload
